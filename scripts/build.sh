@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP=dist/Folga.app
-VERSION=${VERSION:-1.0.0}
+VERSION=${VERSION:-1.1.0}
 
 swift build -c release --arch arm64
 BIN=$(swift build -c release --arch arm64 --show-bin-path)/Folga
