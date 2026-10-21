@@ -13,6 +13,14 @@ Depois, em **Ajustes do Sistema > Privacidade e Segurança > Acesso Total ao Dis
 
 O script assina com o primeiro certificado de código encontrado no Keychain (assim o Acesso Total ao Disco sobrevive a rebuilds). Para assinatura ad-hoc: `SIGN_IDENTITY="-" ./scripts/build.sh`.
 
+Build notarizada pela Apple (abre em qualquer Mac sem aviso do Gatekeeper):
+
+```bash
+NOTARIZE=1 ./scripts/build.sh
+```
+
+Usa o perfil `folga` do Keychain, criado uma vez com `xcrun notarytool store-credentials folga --apple-id <email> --team-id <time>`. Gera `dist/Folga-<versão>-arm64.zip` com o ticket grampeado.
+
 ## Telas
 
 | Tela | O que faz |

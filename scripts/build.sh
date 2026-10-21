@@ -1,5 +1,8 @@
 #!/bin/zsh
-# Builds dist/Folga.app (release, arm64). Optional: SIGN_IDENTITY="-" forces ad-hoc signing.
+# Builds dist/Folga.app (release, arm64).
+#   SIGN_IDENTITY="-"   forces ad-hoc signing
+#   NOTARIZE=1          notarizes with Apple and staples the ticket (keychain profile "folga",
+#                       created once with: xcrun notarytool store-credentials folga ...)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -49,5 +52,24 @@ PLIST
 
 IDENTITY=${SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/"/{print $2; exit}')}
 IDENTITY=${IDENTITY:--}
-codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$APP" 2>/dev/null || codesign --force --sign - "$APP"
-echo "OK: $APP ($(du -sh "$APP" | cut -f1)) assinado com: $IDENTITY"
+ZIP="dist/Folga-${VERSION}-arm64.zip"
+rm -f "$ZIP"
+
+if [[ "${NOTARIZE:-0}" == "1" ]]; then
+  [[ "$IDENTITY" == "-" ]] && { echo "Notarizar exige um certificado Developer ID."; exit 1; }
+  codesign --force --sign "$IDENTITY" --options runtime --timestamp "$APP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  echo "Enviando para a Apple (leva alguns minutos)..."
+  xcrun notarytool submit "$ZIP" --keychain-profile "${NOTARY_PROFILE:-folga}" --wait
+  xcrun stapler staple "$APP"
+  xcrun stapler validate "$APP"
+  # Re-zip so the download carries the stapled ticket.
+  rm -f "$ZIP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  spctl --assess --type execute -vv "$APP"
+  echo "OK: $APP notarizado. Download: $ZIP"
+else
+  codesign --force --sign "$IDENTITY" --options runtime --timestamp=none "$APP" 2>/dev/null || codesign --force --sign - "$APP"
+  ditto -c -k --keepParent "$APP" "$ZIP"
+  echo "OK: $APP ($(du -sh "$APP" | cut -f1)) assinado com: $IDENTITY"
+fi
