@@ -77,74 +77,76 @@ struct LeftoversView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !SystemInfo.hasFullDiskAccess { FDABanner() }
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Restos de apps que você já desinstalou").font(.headline)
-                    Text("Compara ~/Library e /Library com todos os apps, ferramentas do Homebrew e CLIs instalados. Verde: o dono com certeza sumiu. Laranja: nome genérico, confira.")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Toggle("Só os certeiros", isOn: $onlyHigh).toggleStyle(.checkbox)
-            }
-            .padding(16)
-            Divider()
             if !store.scannedOnce && !store.scanning {
-                ContentUnavailableView {
-                    Label("Restos de apps", systemImage: "puzzlepiece.extension")
-                } actions: {
-                    Button("Procurar restos") { Task { await store.scan() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                EmptyState(symbol: "puzzlepiece.extension", title: "Restos de apps",
+                           text: "Compara ~/Library e /Library com todos os apps, ferramentas do Homebrew e CLIs instalados para achar o que ficou de apps que você já removeu.") {
+                    Button("Procurar restos") { Task { await store.scan() } }.buttonStyle(.primary)
                 }
             } else {
-                List(visible) { g in
-                    let open = expanded.contains(g.key)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 10) {
-                            Toggle("", isOn: Binding(get: { store.selected.contains(g.key) }, set: { if $0 { store.selected.insert(g.key) } else { store.selected.remove(g.key) } }))
-                                .toggleStyle(.checkbox).labelsHidden()
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(g.key).fontWeight(.medium)
-                                Text(Set(g.items.map(\.hit.location)).sorted().joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if g.needsAdmin { Text("admin").font(.caption2).foregroundStyle(.orange) }
-                            SafetyBadge(safety: g.safety, help: g.confidence == .high ? "Nenhum app ou ferramenta instalada usa este identificador." : "Nome genérico ou de um fornecedor que ainda tem outro app instalado. Confira antes.")
-                            Text(Fmt.bytes(g.total)).monospacedDigit().fontWeight(.semibold).frame(width: 80, alignment: .trailing)
-                            Button { if open { expanded.remove(g.key) } else { expanded.insert(g.key) } } label: {
-                                Image(systemName: "chevron.down").rotationEffect(.degrees(open ? 180 : 0))
-                            }.buttonStyle(.borderless)
-                        }
-                        if open {
-                            ForEach(g.items, id: \.hit.path) { it in
-                                HStack {
-                                    Text(it.hit.location).font(.caption).foregroundStyle(.secondary).frame(width: 170, alignment: .leading)
-                                    Text(Paths.pretty(it.hit.path)).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
-                                    Spacer()
-                                    Text(Fmt.bytes(it.size)).font(.caption).monospacedDigit()
-                                    Button { FileOps.reveal(it.hit.path) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless)
-                                }
-                                .padding(.leading, 28)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
+                PageHeader(title: "Restos de apps que você já desinstalou",
+                           subtitle: "Seguro: nenhum app ou ferramenta instalada usa esse identificador. Cuidado: nome genérico ou de um fornecedor que ainda tem outro app, confira antes.") {
+                    Toggle("Só os certeiros", isOn: $onlyHigh).toggleStyle(.checkbox).font(.system(size: 12.5)).fixedSize()
                 }
-                .overlay { if store.scanning { ProgressView("Comparando com apps instalados...").padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) } }
+                Hairline()
+                List(visible) { g in
+                    leftoverRow(g).cleanRow()
+                }
+                .cleanList()
+                .overlay { if store.scanning { BusyPill(text: "Comparando com apps instalados...") } }
+                ActionBar {
+                    Text("\(visible.count) grupos · \(Fmt.bytes(visible.reduce(0) { $0 + $1.total }))").font(.system(size: 12.5)).foregroundStyle(Theme.text2)
+                    if let m = store.message { Text(m).font(.system(size: 12.5)).foregroundStyle(Theme.text).lineLimit(1) }
+                    Spacer()
+                    Text("Selecionado").font(.system(size: 12.5)).foregroundStyle(Theme.text2)
+                    Text(Fmt.bytes(store.selectedBytes)).font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                    Button("Mover para a Lixeira") { confirm = true }.buttonStyle(.primary).disabled(store.selected.isEmpty || store.scanning)
+                }
             }
-            Divider()
-            HStack {
-                Text("\(visible.count) grupos · \(Fmt.bytes(visible.reduce(0) { $0 + $1.total }))").foregroundStyle(.secondary)
-                if let m = store.message { Text(m).font(.callout) }
-                Spacer()
-                Text("Selecionado: \(Fmt.bytes(store.selectedBytes))").monospacedDigit()
-                Button("Mover para a Lixeira") { confirm = true }.buttonStyle(.borderedProminent).controlSize(.large).disabled(store.selected.isEmpty || store.scanning)
-            }
-            .padding(12)
         }
+        .background(Theme.bg)
         .navigationTitle("Restos de apps")
-        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning) }
+        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning).help("Procurar de novo") }
         .confirmationDialog("Mover \(store.selected.count) grupo(s) para a Lixeira?", isPresented: $confirm) {
             Button("Mover para a Lixeira", role: .destructive) { Task { await store.remove() } }
         } message: { Text("Tudo vai para a Lixeira, então dá para desfazer. Itens de /Library pedem senha.") }
+    }
+
+    private func leftoverRow(_ g: LeftoverGroup) -> some View {
+        let open = expanded.contains(g.key)
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
+                TriCheck(state: store.selected.contains(g.key)) {
+                    if store.selected.contains(g.key) { store.selected.remove(g.key) } else { store.selected.insert(g.key) }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(g.key).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(Set(g.items.map(\.hit.location)).sorted().joined(separator: ", ")).font(.system(size: 11.5)).foregroundStyle(Theme.text3).lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if g.needsAdmin { Tag(text: "admin", fg: Theme.amber, bg: Theme.amberSoft) }
+                SafetyBadge(safety: g.safety, help: g.confidence == .high ? "Nenhum app ou ferramenta instalada usa este identificador." : "Nome genérico ou de um fornecedor que ainda tem outro app instalado. Confira antes.")
+                Text(Fmt.bytes(g.total)).font(.system(size: 13, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+                IconButton(symbol: open ? "chevron.up" : "chevron.down", help: "Ver arquivos") { if open { expanded.remove(g.key) } else { expanded.insert(g.key) } }
+            }
+            if open {
+                VStack(spacing: 0) {
+                    ForEach(g.items, id: \.hit.path) { it in
+                        HStack(spacing: 10) {
+                            Text(it.hit.location).font(.system(size: 11.5)).foregroundStyle(Theme.text2).frame(width: 170, alignment: .leading)
+                            Text(Paths.pretty(it.hit.path)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 12)
+                            Text(Fmt.bytes(it.size)).font(.system(size: 12)).monospacedDigit()
+                            IconButton(symbol: "folder", help: "Mostrar no Finder") { FileOps.reveal(it.hit.path) }
+                        }
+                        .frame(minHeight: 30)
+                    }
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.subtle))
+                .padding(.leading, 32)
+                .padding(.top, 12)
+            }
+        }
     }
 }
 
@@ -213,24 +215,35 @@ struct AppsView: View {
     }
 
     var body: some View {
-        HSplitView {
+        HStack(spacing: 0) {
             Table(rows, selection: $selection, sortOrder: $sort) {
                 TableColumn("App", value: \.name) { a in
-                    HStack { Image(nsImage: SystemInfo.icon(a.path)).resizable().frame(width: 18, height: 18); Text(a.name) }
+                    HStack(spacing: 8) {
+                        Image(nsImage: SystemInfo.icon(a.path)).resizable().frame(width: 20, height: 20)
+                        Text(a.name).foregroundStyle(Theme.text).lineLimit(1)
+                    }
                 }
                 .width(min: 150, ideal: 200)
-                TableColumn("Usado", value: \.lastUsedSort) { a in Text(Fmt.ago(a.lastUsed)).foregroundStyle(a.lastUsed.map { Date().timeIntervalSince($0) > 90 * 86_400 } ?? true ? .orange : .secondary) }.width(120)
-                TableColumn("Versão", value: \.version) { a in Text(a.version).foregroundStyle(.secondary) }.width(80)
-                TableColumn("Tamanho", value: \.size) { a in Text(Fmt.bytes(a.size)).monospacedDigit() }.width(80)
+                TableColumn("Usado", value: \.lastUsedSort) { a in
+                    Text(Fmt.ago(a.lastUsed)).foregroundStyle(a.lastUsed.map { Date().timeIntervalSince($0) > 90 * 86_400 } ?? true ? Theme.amber : Theme.text2)
+                }
+                .width(min: 90, ideal: 120)
+                TableColumn("Versão", value: \.version) { a in Text(a.version).foregroundStyle(Theme.text3) }.width(min: 60, ideal: 80)
+                TableColumn("Tamanho", value: \.size) { a in Text(Fmt.bytes(a.size)).monospacedDigit().fontWeight(.medium) }.width(80)
             }
-            .frame(minWidth: 480)
-            .overlay { if store.loading && store.apps.isEmpty { ProgressView("Medindo apps...") } }
+            .tableStyle(.inset(alternatesRowBackgrounds: false))
+            .scrollContentBackground(.hidden)
+            .background(Theme.bg)
+            .frame(minWidth: 420)
+            .overlay { if store.loading && store.apps.isEmpty { BusyPill(text: "Medindo apps...") } }
 
-            detail.frame(minWidth: 300, idealWidth: 360)
+            Rectangle().fill(Theme.line).frame(width: 1)
+            detail.frame(width: 340).frame(maxHeight: .infinity).background(Theme.bg)
         }
+        .background(Theme.bg)
         .navigationTitle("Aplicativos")
-        .searchable(text: $search, prompt: "Buscar app")
-        .toolbar { Button { Task { await store.load() } } label: { Image(systemName: "arrow.clockwise") } }
+        .searchable(text: $search, placement: .toolbar, prompt: "Buscar app")
+        .toolbar { Button { Task { await store.load() } } label: { Image(systemName: "arrow.clockwise") }.help("Atualizar") }
         .task { if store.apps.isEmpty { await store.load() } }
         .onChange(of: selection) { _, id in
             if let a = store.apps.first(where: { $0.id == id }), store.related[a.id] == nil { Task { await store.loadRelated(a) } }
@@ -244,53 +257,67 @@ struct AppsView: View {
     private var detail: some View {
         if let a = store.apps.first(where: { $0.id == selection }) {
             let rel = store.related[a.id]
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Image(nsImage: SystemInfo.icon(a.path)).resizable().frame(width: 48, height: 48)
-                    VStack(alignment: .leading) {
-                        Text(a.name).font(.title3.weight(.semibold))
-                        Text(a.bundleId).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    Image(nsImage: SystemInfo.icon(a.path)).resizable().frame(width: 52, height: 52)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(a.name).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.text)
+                        Text(a.bundleId).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text3).textSelection(.enabled).lineLimit(1)
                     }
                 }
-                Grid(alignment: .leading, verticalSpacing: 4) {
-                    GridRow { Text("App").foregroundStyle(.secondary); Text(Fmt.bytes(a.size)) }
-                    GridRow { Text("Arquivos do app").foregroundStyle(.secondary); Text(rel.map { Fmt.bytes($0.reduce(0) { $0 + $1.size }) } ?? "...") }
-                    GridRow { Text("Último uso").foregroundStyle(.secondary); Text(Fmt.ago(a.lastUsed)) }
-                    GridRow { Text("Local").foregroundStyle(.secondary); Text(Paths.pretty(a.path)).lineLimit(1).truncationMode(.middle) }
+                VStack(spacing: 0) {
+                    info("App", Fmt.bytes(a.size))
+                    info("Arquivos do app", rel.map { Fmt.bytes($0.reduce(0) { $0 + $1.size }) } ?? "...")
+                    info("Último uso", Fmt.ago(a.lastUsed))
+                    info("Local", Paths.pretty(a.path), last: true)
                 }
-                .font(.callout)
-                if a.isApple { Label("App da Apple. Remover pode exigir reinstalar pela App Store.", systemImage: "applelogo").font(.caption).foregroundStyle(.orange) }
-                Divider()
-                Text("Arquivos relacionados").font(.headline)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.subtle))
+                if a.isApple { Notice(text: "App da Apple. Remover pode exigir reinstalar pela App Store.", symbol: "applelogo") }
+                Text("Arquivos relacionados").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
                 if let rel {
-                    if rel.isEmpty { Text("Nada encontrado fora do bundle.").foregroundStyle(.secondary).font(.callout) }
+                    if rel.isEmpty { Text("Nada encontrado fora do bundle.").font(.system(size: 12.5)).foregroundStyle(Theme.text2) }
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 10) {
                             ForEach(rel, id: \.hit.path) { r in
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text(r.hit.location).font(.caption).foregroundStyle(.secondary)
-                                        Text(Paths.pretty(r.hit.path)).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                                HStack(spacing: 8) {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(r.hit.location).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                                        Text(Paths.pretty(r.hit.path)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
                                     }
-                                    Spacer()
-                                    Text(Fmt.bytes(r.size)).font(.caption).monospacedDigit()
-                                    Button { FileOps.reveal(r.hit.path) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless)
+                                    Spacer(minLength: 8)
+                                    Text(Fmt.bytes(r.size)).font(.system(size: 11.5)).monospacedDigit().foregroundStyle(Theme.text2)
+                                    IconButton(symbol: "folder", help: "Mostrar no Finder") { FileOps.reveal(r.hit.path) }
                                 }
                             }
                         }
                     }
                 } else { ProgressView().controlSize(.small) }
-                Spacer()
-                if let m = store.message { Text(m).font(.callout) }
-                HStack {
-                    Button("Mostrar no Finder") { FileOps.reveal(a.path) }
+                Spacer(minLength: 0)
+                if let m = store.message { Text(m).font(.system(size: 12)).foregroundStyle(Theme.text2) }
+                HStack(spacing: 8) {
+                    Button("Mostrar no Finder") { FileOps.reveal(a.path) }.buttonStyle(.app)
                     Spacer()
-                    Button("Desinstalar") { confirm = a }.buttonStyle(.borderedProminent).tint(.red).disabled(rel == nil)
+                    Button("Desinstalar") { confirm = a }.buttonStyle(AppButtonStyle(kind: .danger, large: true)).disabled(rel == nil)
                 }
             }
-            .padding(16)
+            .padding(22)
         } else {
-            ContentUnavailableView("Escolha um app", systemImage: "app.dashed", description: Text("Veja o tamanho real (app + caches + containers) e desinstale levando tudo junto."))
+            EmptyState(symbol: "app.dashed", title: "Escolha um app",
+                       text: "Veja o tamanho real (app + caches + containers) e desinstale levando tudo junto.") { EmptyView() }
+        }
+    }
+
+    private func info(_ k: String, _ v: String, last: Bool = false) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(k).foregroundStyle(Theme.text2)
+                Spacer(minLength: 12)
+                Text(v).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+            }
+            .font(.system(size: 12.5))
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            if !last { Rectangle().fill(Theme.line).frame(height: 1).padding(.horizontal, 12) }
         }
     }
 }

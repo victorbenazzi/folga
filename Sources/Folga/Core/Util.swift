@@ -298,13 +298,6 @@ enum Safety: Int, Comparable, CaseIterable {
         }
     }
 
-    var color: Color {
-        switch self {
-        case .safe: .green
-        case .caution: .orange
-        case .danger: .red
-        }
-    }
 
     var symbol: String {
         switch self {
@@ -320,13 +313,15 @@ struct SafetyBadge: View {
     var help: String? = nil
 
     var body: some View {
-        Label(safety.label, systemImage: safety.symbol)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(safety.color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(safety.color.opacity(0.13), in: Capsule())
-            .help(help ?? safety.label)
-            .fixedSize()
+        HStack(spacing: 4) {
+            Circle().fill(safety.fg).frame(width: 6, height: 6)
+            Text(safety.label).font(.system(size: 11, weight: .semibold))
+        }
+        .foregroundStyle(safety.fg)
+        .padding(.horizontal, 8)
+        .frame(height: 22)
+        .background(Capsule().fill(safety.soft))
+        .help(help ?? safety.label)
+        .fixedSize()
     }
 }

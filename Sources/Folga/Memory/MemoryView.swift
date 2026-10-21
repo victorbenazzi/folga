@@ -81,29 +81,51 @@ struct MemoryBar: View {
 
     var body: some View {
         let parts: [(String, Int64, Color)] = [
-            ("Apps", s.app, .blue), ("Fixa (wired)", s.wired, .orange), ("Comprimida", s.compressed, .purple),
-            ("Cache de arquivos", s.cached, .teal.opacity(0.55)), ("Livre", s.free, .gray.opacity(0.25))
+            ("Apps", s.app, Theme.barApp), ("Fixa (wired)", s.wired, Theme.barWired), ("Comprimida", s.compressed, Theme.barCompressed),
+            ("Cache de arquivos", s.cached, Theme.barCache), ("Livre", s.free, Theme.barFree)
         ]
-        let total = max(Double(s.total), 1)
-        VStack(alignment: .leading, spacing: 8) {
+        // Sum of the parts, not physical RAM, so the bar always fills its width.
+        let total = max(Double(parts.reduce(0) { $0 + $1.1 }), 1)
+        VStack(alignment: .leading, spacing: 12) {
             GeometryReader { geo in
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     ForEach(parts, id: \.0) { p in
-                        Rectangle().fill(p.2).frame(width: max(0, geo.size.width * Double(p.1) / total))
+                        Rectangle().fill(p.2).frame(width: max(0, (geo.size.width - 8) * Double(p.1) / total))
                     }
                 }
             }
-            .frame(height: 14)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            HStack(spacing: 14) {
+            .frame(height: 10)
+            .clipShape(Capsule())
+            FlowLayout(spacing: 18, lineSpacing: 6) {
                 ForEach(parts, id: \.0) { p in
-                    HStack(spacing: 4) {
-                        Circle().fill(p.2).frame(width: 8, height: 8)
-                        Text("\(p.0) \(Fmt.mem(p.1))").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        RoundedRectangle(cornerRadius: 2).fill(p.2).frame(width: 8, height: 8)
+                        Text(p.0).foregroundStyle(Theme.text2)
+                        Text(Fmt.mem(p.1)).foregroundStyle(Theme.text).monospacedDigit()
                     }
+                    .font(.system(size: 12))
+                    .fixedSize()
                 }
             }
         }
+    }
+}
+
+struct PressureLabel: View {
+    let s: MemorySnapshot
+
+    var body: some View {
+        let sev: Safety = s.pressure >= 4 ? .danger : s.pressure >= 2 ? .caution : .safe
+        HStack(spacing: 6) {
+            Circle().fill(sev.fg).frame(width: 7, height: 7)
+            Text("Pressão \(s.pressureLabel.lowercased())")
+        }
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(sev.fg)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(Capsule().fill(sev.soft))
+        .fixedSize()
     }
 }
 
@@ -127,17 +149,19 @@ struct MemoryView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
+            Hairline()
             List {
-                ForEach(visible) { g in row(g) }
+                ForEach(visible) { g in row(g).cleanRow() }
             }
-            .listStyle(.inset)
+            .cleanList()
         }
+        .background(Theme.bg)
         .navigationTitle("Memória")
-        .searchable(text: $search, prompt: "Buscar processo ou PID")
+        .searchable(text: $search, placement: .toolbar, prompt: "Buscar processo ou PID")
         .toolbar {
             ToolbarItemGroup {
-                Toggle("Ao vivo", isOn: Bindable(store).autoRefresh).toggleStyle(.switch).help("Atualiza a cada 3 s enquanto esta tela estiver aberta")
+                Toggle("Ao vivo", isOn: Bindable(store).autoRefresh).toggleStyle(.switch).controlSize(.small)
+                    .help("Atualiza a cada 3 s enquanto esta tela estiver aberta")
                 Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help("Atualizar")
             }
         }
@@ -152,78 +176,110 @@ struct MemoryView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("\(Fmt.mem(store.snapshot.used)) de \(Fmt.mem(store.snapshot.total)) em uso").font(.title2.weight(.semibold))
-                Spacer()
-                Label("Pressão: \(store.snapshot.pressureLabel)", systemImage: "gauge.with.needle")
-                    .foregroundStyle(store.snapshot.pressure >= 4 ? .red : store.snapshot.pressure >= 2 ? .orange : .green)
-                Text("Swap \(Fmt.mem(store.snapshot.swapUsed))").foregroundStyle(store.snapshot.swapUsed > 2 << 30 ? .orange : .secondary)
-                Button("Liberar cache (purge)") { Task { await store.purge() } }
-                    .help("Roda /usr/sbin/purge como admin: descarta cache de disco da RAM. Efeito temporário; o que ajuda de verdade é fechar o que está pesado.")
+        let snap = store.snapshot
+        return VStack(alignment: .leading, spacing: 18) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 12) {
+                    usage(snap)
+                    Spacer(minLength: 16)
+                    stats(snap)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    usage(snap)
+                    HStack(spacing: 12) { stats(snap) }
+                }
             }
-            MemoryBar(s: store.snapshot)
-            HStack(spacing: 6) {
-                chip(nil, "Tudo", store.groups.reduce(0) { $0 + $1.memory })
-                ForEach(ProcCategory.allCases) { c in chip(c, c.rawValue, store.total(c)) }
-                Spacer()
-                Toggle("Mostrar sistema", isOn: $showSystem).toggleStyle(.checkbox)
-                Picker("", selection: $sortByCpu) { Text("Por memória").tag(false); Text("Por CPU").tag(true) }
-                    .pickerStyle(.segmented).frame(width: 190)
+            MemoryBar(s: snap)
+            HStack(alignment: .top, spacing: 16) {
+                FlowLayout(spacing: 8, lineSpacing: 8) {
+                    Chip(title: "Tudo", value: Fmt.mem(store.groups.reduce(0) { $0 + $1.memory }), selected: filter == nil) { filter = nil }
+                    ForEach(ProcCategory.allCases) { c in
+                        Chip(title: c.rawValue, value: Fmt.mem(store.total(c)), symbol: c.symbol, selected: filter == c) { filter = c }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 14) {
+                    Toggle("Sistema", isOn: $showSystem).toggleStyle(.checkbox).font(.system(size: 12.5)).fixedSize()
+                    Picker("", selection: $sortByCpu) { Text("Memória").tag(false); Text("CPU").tag(true) }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 150)
+                }
+                .padding(.top, 2)
             }
             if let e = store.lastError {
-                Label(e, systemImage: "exclamationmark.triangle").foregroundStyle(.orange).font(.callout)
+                Label(e, systemImage: "exclamationmark.triangle.fill").font(.system(size: 12.5)).foregroundStyle(Theme.amber)
             }
         }
-        .padding(16)
+        .padding(.horizontal, Theme.pagePadding)
+        .padding(.top, 22)
+        .padding(.bottom, 18)
     }
 
-    private func chip(_ c: ProcCategory?, _ title: String, _ bytes: Int64) -> some View {
-        Button { filter = c } label: {
-            HStack(spacing: 5) {
-                if let c { Image(systemName: c.symbol) }
-                Text(title)
-                Text(Fmt.mem(bytes)).foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(filter == c ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: Capsule())
+    private func usage(_ s: MemorySnapshot) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(Fmt.mem(s.used)).font(.system(size: 26, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.text)
+            Text("de \(Fmt.mem(s.total)) em uso").font(.system(size: 14)).foregroundStyle(Theme.text2)
         }
-        .buttonStyle(.plain)
+        .fixedSize()
+    }
+
+    @ViewBuilder
+    private func stats(_ s: MemorySnapshot) -> some View {
+        PressureLabel(s: s)
+        Text("Swap \(Fmt.mem(s.swapUsed))")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(s.swapUsed > 2 << 30 ? Theme.amber : Theme.text2)
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(Capsule().fill(s.swapUsed > 2 << 30 ? Theme.amberSoft : Theme.subtle))
+            .fixedSize()
+        Button("Liberar cache") { Task { await store.purge() } }
+            .buttonStyle(.app)
+            .help("Roda /usr/sbin/purge como admin: descarta cache de disco da RAM. Efeito temporário; o que ajuda de verdade é fechar o que está pesado.")
     }
 
     @ViewBuilder
     private func row(_ g: ProcGroup) -> some View {
         let isOpen = expanded.contains(g.id)
+        let canExpand = g.processes.count > 1
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Button { if isOpen { expanded.remove(g.id) } else { expanded.insert(g.id) } } label: {
-                    Image(systemName: "chevron.right").rotationEffect(.degrees(isOpen ? 90 : 0)).frame(width: 12)
-                }
-                .buttonStyle(.plain)
-                .opacity(g.processes.count > 1 ? 1 : 0.25)
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundStyle(Theme.text3)
+                    .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    .frame(width: 12)
+                    .opacity(canExpand ? 1 : 0)
                 Group {
                     if let b = g.bundlePath { Image(nsImage: SystemInfo.icon(b)).resizable() }
-                    else { Image(systemName: g.category.symbol).foregroundStyle(.secondary) }
-                }
-                .frame(width: 22, height: 22)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(g.name).fontWeight(.medium)
-                        Text(g.category.rawValue).font(.caption2).padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
+                    else {
+                        Image(systemName: g.category.symbol).font(.system(size: 12, weight: .medium)).foregroundStyle(g.category.fg)
+                            .frame(width: 26, height: 26).background(RoundedRectangle(cornerRadius: 7).fill(g.category.soft))
                     }
-                    Text(g.processes.count > 1 ? "\(g.processes.count) processos" : "PID \(g.mainPid)\(g.processes.first?.isMine == false ? " · root" : "")")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
-                Spacer()
+                .frame(width: 28, height: 28)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(g.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                        Tag(text: g.category.rawValue, fg: g.category.fg, bg: g.category.soft)
+                    }
+                    Text(canExpand ? "\(g.processes.count) processos" : "PID \(g.mainPid)\(g.processes.first?.isMine == false ? " · root" : "")")
+                        .font(.system(size: 11.5)).foregroundStyle(Theme.text3)
+                }
+                .layoutPriority(1)
+                Spacer(minLength: 12)
                 SafetyBadge(safety: g.safety, help: g.reason)
-                Text(Fmt.pct(g.cpu)).monospacedDigit().foregroundStyle(g.cpu > 50 ? .orange : .secondary).frame(width: 60, alignment: .trailing)
-                Text(Fmt.mem(g.memory)).monospacedDigit().fontWeight(.semibold).frame(width: 80, alignment: .trailing)
-                Button("Encerrar") { confirmOrRun(g, .quit) }.disabled(g.safety == .danger && g.processes.contains { $0.pid <= 1 })
-                Button("Matar") { confirmOrRun(g, .force) }.tint(.red).buttonStyle(.borderedProminent)
-                    .disabled(g.processes.contains { $0.pid <= 1 || $0.pid == getpid() })
+                Text(Fmt.pct(g.cpu)).font(.system(size: 12.5)).monospacedDigit()
+                    .foregroundStyle(g.cpu > 50 ? Theme.amber : Theme.text2).frame(width: 54, alignment: .trailing)
+                Text(Fmt.mem(g.memory)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+                HStack(spacing: 6) {
+                    Button("Encerrar") { confirmOrRun(g, .quit) }.buttonStyle(.app)
+                        .disabled(g.processes.contains { $0.pid <= 1 })
+                    Button("Matar") { confirmOrRun(g, .force) }.buttonStyle(.dangerSoft)
+                        .disabled(g.processes.contains { $0.pid <= 1 || $0.pid == getpid() })
+                }
             }
             .contentShape(Rectangle())
+            .onTapGesture { if canExpand { if isOpen { expanded.remove(g.id) } else { expanded.insert(g.id) } } }
             .contextMenu {
                 if let p = g.processes.first?.path, !p.isEmpty { Button("Mostrar no Finder") { FileOps.reveal(g.bundlePath ?? p) } }
                 Button("Copiar PIDs") {
@@ -232,27 +288,28 @@ struct MemoryView: View {
                 }
             }
             if isOpen {
-                ForEach(g.processes) { p in
-                    HStack(spacing: 8) {
-                        Text("\(p.pid)").monospacedDigit().foregroundStyle(.secondary).frame(width: 60, alignment: .leading)
-                        Text(p.name).lineLimit(1).truncationMode(.middle)
-                        if !p.isMine { Text("root").font(.caption2).foregroundStyle(.orange) }
-                        Spacer()
-                        Text(Fmt.pct(p.cpu)).monospacedDigit().foregroundStyle(.secondary).frame(width: 60, alignment: .trailing)
-                        Text(Fmt.mem(p.memory)).monospacedDigit().frame(width: 80, alignment: .trailing)
-                        Button { Task { await store.kill(p, mode: .force) } } label: { Image(systemName: "xmark.circle") }
-                            .buttonStyle(.borderless).help("Matar só este processo (SIGKILL)")
-                            .disabled(p.pid <= 1 || p.pid == getpid())
+                VStack(spacing: 0) {
+                    ForEach(g.processes) { p in
+                        HStack(spacing: 10) {
+                            Text("\(p.pid)").monospacedDigit().foregroundStyle(Theme.text3).frame(width: 56, alignment: .leading)
+                            Text(p.name).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                            if !p.isMine { Tag(text: "root", fg: Theme.amber, bg: Theme.amberSoft) }
+                            Spacer(minLength: 12)
+                            Text(Fmt.pct(p.cpu)).monospacedDigit().foregroundStyle(Theme.text2).frame(width: 54, alignment: .trailing)
+                            Text(Fmt.mem(p.memory)).monospacedDigit().foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+                            IconButton(symbol: "xmark", help: "Matar só este processo (SIGKILL)", tint: Theme.red) { Task { await store.kill(p, mode: .force) } }
+                                .disabled(p.pid <= 1 || p.pid == getpid())
+                        }
+                        .font(.system(size: 12))
+                        .frame(height: 30)
+                        .help(p.path)
                     }
-                    .font(.callout)
-                    .padding(.leading, 56)
-                    .padding(.vertical, 2)
-                    .help(p.path)
                 }
-                .padding(.top, 4)
+                .padding(.leading, 64)
+                .padding(.trailing, 4)
+                .padding(.top, 10)
             }
         }
-        .padding(.vertical, 3)
     }
 
     private func confirmOrRun(_ g: ProcGroup, _ mode: Killer.Mode) {

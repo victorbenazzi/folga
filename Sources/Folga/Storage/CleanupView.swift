@@ -177,41 +177,43 @@ struct CleanupView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !SystemInfo.hasFullDiskAccess { FDABanner() }
-            HStack(spacing: 6) {
-                chip(nil, "Tudo", store.results.reduce(0) { $0 + $1.total }, "square.grid.2x2")
-                ForEach(CleanGroup.allCases) { g in chip(g, g.rawValue, store.total(g), g.symbol) }
-                Spacer()
-            }
-            .padding(12)
-            Divider()
             if !store.scannedOnce && !store.scanning {
-                ContentUnavailableView {
-                    Label("Limpeza", systemImage: "sparkles")
-                } description: {
-                    Text("Caches, logs, temporários, builds do Xcode, node, Python, Rust, Go, Docker, modelos de IA, navegadores e mais. Nada é apagado sem você confirmar.")
-                } actions: {
-                    Button("Analisar agora") { Task { await store.scan() } }.buttonStyle(.borderedProminent).controlSize(.large)
+                EmptyState(symbol: "sparkles", title: "Limpeza",
+                           text: "Caches, logs, temporários, builds do Xcode, node, Python, Rust, Go, Docker, modelos de IA, navegadores e mais. Nada é apagado sem você confirmar.") {
+                    Button("Analisar agora") { Task { await store.scan() } }.buttonStyle(.primary)
                 }
             } else {
+                FlowLayout(spacing: 8, lineSpacing: 8) {
+                    Chip(title: "Tudo", value: Fmt.bytes(store.results.reduce(0) { $0 + $1.total }), selected: group == nil) { group = nil }
+                    ForEach(CleanGroup.allCases) { g in
+                        Chip(title: g.rawValue, value: Fmt.bytes(store.total(g)), symbol: g.symbol, selected: group == g) { group = g }
+                    }
+                }
+                .padding(.horizontal, Theme.pagePadding)
+                .padding(.vertical, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Hairline()
                 List {
                     ForEach(CleanGroup.allCases.filter { group == nil || $0 == group }) { g in
                         let rows = store.results.filter { $0.target.group == g }
                         if !rows.isEmpty {
                             Section {
-                                ForEach(rows) { row($0) }
+                                ForEach(rows) { row($0).cleanRow() }
                             } header: {
-                                HStack { Label(g.rawValue, systemImage: g.symbol); Spacer(); Text(Fmt.bytes(store.total(g))) }
+                                SectionTitle(title: g.rawValue, symbol: g.symbol, value: Fmt.bytes(store.total(g)))
+                                    .padding(.horizontal, Theme.pagePadding - 16)
                             }
                         }
                     }
                 }
-                .overlay { if store.scanning { ProgressView(store.status).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) } }
+                .cleanList()
+                .overlay { if store.scanning { BusyPill(text: store.status.isEmpty ? "Procurando..." : store.status) } }
+                footer
             }
-            Divider()
-            footer
         }
+        .background(Theme.bg)
         .navigationTitle("Limpeza")
-        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning) }
+        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning).help("Analisar de novo") }
         .confirmationDialog("Limpar \(Fmt.bytes(store.selectedBytes))?", isPresented: $confirm) {
             Button("Limpar", role: .destructive) { Task { await store.clean() } }
         } message: {
@@ -220,99 +222,100 @@ struct CleanupView: View {
     }
 
     private var footer: some View {
-        HStack {
+        ActionBar {
             if let r = store.report {
-                VStack(alignment: .leading) {
-                    Text("Liberado: \(Fmt.bytes(r.freed))").fontWeight(.semibold)
-                    if !r.failed.isEmpty { Text("\(r.failed.count) item(ns) em uso ou protegidos foram pulados.").font(.caption).foregroundStyle(.secondary).help(r.failed.prefix(30).joined(separator: "\n")) }
-                    if !r.log.isEmpty { Text(r.log.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Liberado: \(Fmt.bytes(r.freed))").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.green)
+                    if !r.failed.isEmpty {
+                        Text("\(r.failed.count) item(ns) em uso ou protegidos foram pulados.").font(.system(size: 11.5)).foregroundStyle(Theme.text2)
+                            .help(r.failed.prefix(30).joined(separator: "\n"))
+                    }
+                    if !r.log.isEmpty { Text(r.log.joined(separator: " · ")).font(.system(size: 11.5)).foregroundStyle(Theme.text2).lineLimit(1) }
                 }
             }
             Spacer()
-            Text("Selecionado: \(Fmt.bytes(store.selectedBytes))").monospacedDigit()
+            Text("Selecionado").font(.system(size: 12.5)).foregroundStyle(Theme.text2)
+            Text(Fmt.bytes(store.selectedBytes)).font(.system(size: 14, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.text)
             Button(store.cleaning ? "Limpando..." : "Limpar") { confirm = true }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .buttonStyle(.primary)
                 .disabled(store.cleaning || store.scanning || (store.selected.isEmpty && store.commands.isEmpty))
         }
-        .padding(12)
-    }
-
-    private func chip(_ g: CleanGroup?, _ title: String, _ bytes: Int64, _ symbol: String) -> some View {
-        Button { group = g } label: {
-            HStack(spacing: 5) {
-                Image(systemName: symbol)
-                Text(title)
-                if store.scannedOnce { Text(Fmt.bytes(bytes)).foregroundStyle(.secondary) }
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(group == g ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.08), in: Capsule())
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
     private func row(_ r: CleanResult) -> some View {
         let open = expanded.contains(r.id)
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
                 if case .info = r.target.action {
-                    Image(systemName: "info.circle").foregroundStyle(.secondary).frame(width: 18)
+                    Image(systemName: "info.circle").font(.system(size: 14)).foregroundStyle(Theme.text3).frame(width: 18).padding(.top, 1)
                 } else {
-                    TriCheck(state: store.isOn(r)) { store.toggle(r) }
+                    TriCheck(state: store.isOn(r)) { store.toggle(r) }.padding(.top, 1)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(r.target.title).fontWeight(.medium)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(r.target.title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text)
                         actionTag(r.target.action)
                     }
-                    Text(r.target.detail).font(.caption).foregroundStyle(.secondary)
-                    if let p = r.probe { Text(p).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(6) }
+                    Text(r.target.detail).font(.system(size: 12)).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
+                    if let p = r.probe {
+                        Text(p).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text2).lineLimit(6)
+                            .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.subtle))
+                            .padding(.top, 4)
+                    }
                 }
-                Spacer()
+                .frame(maxWidth: .infinity, alignment: .leading)
                 SafetyBadge(safety: r.target.safety)
-                Text(r.items.isEmpty ? "?" : Fmt.bytes(r.total)).monospacedDigit().fontWeight(.semibold).frame(width: 85, alignment: .trailing)
-                Button { if open { expanded.remove(r.id) } else { expanded.insert(r.id) } } label: {
-                    Image(systemName: "chevron.down").rotationEffect(.degrees(open ? 180 : 0))
+                Text(r.items.isEmpty ? "?" : Fmt.bytes(r.total)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                    .foregroundStyle(Theme.text).frame(width: 80, alignment: .trailing)
+                IconButton(symbol: open ? "chevron.up" : "chevron.down", help: "Ver itens") {
+                    if open { expanded.remove(r.id) } else { expanded.insert(r.id) }
                 }
-                .buttonStyle(.borderless)
                 .opacity(r.items.isEmpty ? 0 : 1)
+                .disabled(r.items.isEmpty)
             }
             if open {
-                ForEach(r.items.prefix(300)) { i in
-                    HStack(spacing: 8) {
-                        if !r.target.isCommand {
-                            Toggle("", isOn: Binding(get: { store.selected.contains(i.path) }, set: { on in if on { store.selected.insert(i.path) } else { store.selected.remove(i.path) } }))
-                                .toggleStyle(.checkbox).labelsHidden()
+                VStack(spacing: 0) {
+                    ForEach(r.items.prefix(300)) { i in
+                        HStack(spacing: 10) {
+                            if !r.target.isCommand {
+                                Toggle("", isOn: Binding(get: { store.selected.contains(i.path) }, set: { on in if on { store.selected.insert(i.path) } else { store.selected.remove(i.path) } }))
+                                    .toggleStyle(.checkbox).labelsHidden()
+                            }
+                            Text(Paths.pretty(i.path)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text).lineLimit(1).truncationMode(.middle)
+                            if r.target.generic && i.isBig {
+                                Tag(text: "grande: confira", fg: Theme.amber, bg: Theme.amberSoft)
+                                    .help("Pode ser cache de modelo ou dataset. Apagar obriga a baixar de novo.")
+                            }
+                            Spacer(minLength: 12)
+                            Text(Fmt.ago(i.mtime)).font(.system(size: 11.5)).foregroundStyle(Theme.text3).fixedSize()
+                            Text(Fmt.bytes(i.size)).font(.system(size: 12)).monospacedDigit().foregroundStyle(Theme.text).frame(width: 72, alignment: .trailing)
+                            IconButton(symbol: "folder", help: "Mostrar no Finder") { FileOps.reveal(i.path) }
                         }
-                        Text(Paths.pretty(i.path)).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
-                        if r.target.generic && i.isBig {
-                            Text("grande: confira").font(.caption2).foregroundStyle(.orange).help("Pode ser cache de modelo ou dataset. Apagar obriga a baixar de novo.")
-                        }
-                        Spacer()
-                        Text(Fmt.ago(i.mtime)).font(.caption).foregroundStyle(.secondary)
-                        Text(Fmt.bytes(i.size)).font(.caption).monospacedDigit().frame(width: 75, alignment: .trailing)
-                        Button { FileOps.reveal(i.path) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless)
+                        .frame(minHeight: 30)
                     }
-                    .padding(.leading, 28)
+                    if r.items.count > 300 {
+                        Text("+ \(r.items.count - 300) itens").font(.system(size: 11.5)).foregroundStyle(Theme.text3).frame(maxWidth: .infinity, alignment: .leading).padding(.top, 4)
+                    }
                 }
-                if r.items.count > 300 { Text("+ \(r.items.count - 300) itens").font(.caption).foregroundStyle(.secondary).padding(.leading, 28) }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.subtle))
+                .padding(.leading, 32)
+                .padding(.top, 12)
             }
         }
-        .padding(.vertical, 3)
     }
 
     @ViewBuilder
     private func actionTag(_ a: CleanTarget.Action) -> some View {
-        let (t, c): (String, Color) = {
-            switch a {
-            case .trash: ("Lixeira", .blue)
-            case .command: ("comando", .purple)
-            case .adminCommand, .adminDelete: ("admin", .orange)
-            case .info: ("info", .gray)
-            case .delete: ("", .clear)
-            }
-        }()
-        if !t.isEmpty { Text(t).font(.caption2).foregroundStyle(c).padding(.horizontal, 5).background(c.opacity(0.12), in: Capsule()) }
+        switch a {
+        case .trash: Tag(text: "Lixeira", fg: Theme.accent, bg: Theme.accentSoft)
+        case .command: Tag(text: "comando", fg: ProcCategory.dev.fg, bg: ProcCategory.dev.soft)
+        case .adminCommand, .adminDelete: Tag(text: "admin", fg: Theme.amber, bg: Theme.amberSoft)
+        case .info: Tag(text: "só informação")
+        case .delete: EmptyView()
+        }
     }
 }
 
@@ -322,24 +325,33 @@ struct TriCheck: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: state == true ? "checkmark.square.fill" : state == nil ? "minus.square.fill" : "square")
-                .foregroundStyle(state == false ? Color.secondary : Color.accentColor)
-                .font(.system(size: 15))
+            ZStack {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(state == false ? Theme.bg : Theme.accent)
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(state == false ? Theme.lineStrong : Theme.accent, lineWidth: 1))
+                if state != false {
+                    Image(systemName: state == true ? "checkmark" : "minus").font(.system(size: 9, weight: .heavy)).foregroundStyle(.white)
+                }
+            }
+            .frame(width: 16, height: 16)
+            .frame(width: 18, height: 18)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(width: 18)
     }
 }
 
 struct FDABanner: View {
     var body: some View {
-        HStack {
-            Image(systemName: "lock.shield").foregroundStyle(.orange)
-            Text("Sem Acesso Total ao Disco: Lixeira, Safari, Mail e alguns containers ficam invisíveis.").font(.callout)
-            Spacer()
-            Button("Conceder acesso") { SystemInfo.openFullDiskAccessSettings() }
+        HStack(spacing: 10) {
+            Image(systemName: "lock.shield.fill").foregroundStyle(Theme.amber)
+            Text("Sem Acesso Total ao Disco: Lixeira, Safari, Mail e alguns containers ficam invisíveis.")
+                .font(.system(size: 12.5)).foregroundStyle(Theme.text)
+            Spacer(minLength: 12)
+            Button("Conceder acesso") { SystemInfo.openFullDiskAccessSettings() }.buttonStyle(.app)
         }
-        .padding(10)
-        .background(Color.orange.opacity(0.1))
+        .padding(.horizontal, Theme.pagePadding)
+        .padding(.vertical, 10)
+        .background(Theme.amberSoft)
     }
 }

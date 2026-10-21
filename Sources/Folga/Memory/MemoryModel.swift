@@ -166,7 +166,7 @@ enum ProcCategory: String, CaseIterable, Identifiable {
         case .dev: "hammer.fill"
         case .ai: "sparkles"
         case .browser: "globe"
-        case .apps: "app.fill"
+        case .apps: "square.grid.2x2"
         case .system: "gearshape.2.fill"
         }
     }

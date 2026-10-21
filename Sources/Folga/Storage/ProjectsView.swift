@@ -199,54 +199,47 @@ struct ProjectsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("node_modules, builds, venvs e caches dentro dos seus projetos").font(.headline)
-                    Text("Tudo aqui é recriável com npm install, cargo build, pod install etc. venvs e Pods pedem reinstalação.").font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker("Parados há", selection: $idleFilter) {
-                    Text("Todos").tag(0); Text("7+ dias").tag(7); Text("30+ dias").tag(30); Text("90+ dias").tag(90); Text("1+ ano").tag(365)
-                }
-                .frame(width: 190)
-                Menu("Selecionar") {
-                    Button("Parados há 30+ dias") { store.selectIdle(30) }
-                    Button("Parados há 90+ dias") { store.selectIdle(90) }
-                    Button("Todos os seguros") { store.selectIdle(0) }
-                    Button("Nenhum") { store.selected = [] }
-                }
-                .frame(width: 110)
-            }
-            .padding(16)
-            Divider()
             if store.projects.isEmpty && !store.scanning {
-                ContentUnavailableView {
-                    Label("Projetos", systemImage: "folder.badge.gearshape")
-                } description: {
-                    Text("Procura em ~/Documents, ~/Developer, ~/Projects, ~/code, ~/GitHub, ~/Desktop, ~/Downloads e nas pastas que você adicionar.")
-                } actions: {
-                    Button("Procurar projetos") { Task { await store.scan() } }.buttonStyle(.borderedProminent).controlSize(.large)
-                    Button("Adicionar pasta...") { store.addRoot() }
+                EmptyState(symbol: "folder.badge.gearshape", title: "Projetos",
+                           text: "Procura node_modules, builds, venvs e caches em ~/Documents, ~/Developer, ~/Projects, ~/code, ~/GitHub, ~/Desktop, ~/Downloads e nas pastas que você adicionar.") {
+                    Button("Procurar projetos") { Task { await store.scan() } }.buttonStyle(.primary)
+                    Button("Adicionar pasta") { store.addRoot() }.buttonStyle(AppButtonStyle(large: true))
                 }
             } else {
-                List {
-                    ForEach(visible) { p in row(p) }
+                PageHeader(title: "node_modules, builds, venvs e caches dos seus projetos",
+                           subtitle: "Tudo aqui volta com npm install, cargo build, pod install etc. venvs e Pods pedem reinstalação.") {
+                    Picker("Parados há", selection: $idleFilter) {
+                        Text("Todos").tag(0); Text("7+ dias").tag(7); Text("30+ dias").tag(30); Text("90+ dias").tag(90); Text("1+ ano").tag(365)
+                    }
+                    .font(.system(size: 12.5)).fixedSize()
+                    Menu("Selecionar") {
+                        Button("Parados há 30+ dias") { store.selectIdle(30) }
+                        Button("Parados há 90+ dias") { store.selectIdle(90) }
+                        Button("Todos os seguros") { store.selectIdle(0) }
+                        Button("Nenhum") { store.selected = [] }
+                    }
+                    .menuStyle(.button).fixedSize()
                 }
-                .overlay { if store.scanning { ProgressView(store.status).padding().background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10)) } }
+                Hairline()
+                List {
+                    ForEach(visible) { p in row(p).cleanRow() }
+                }
+                .cleanList()
+                .overlay { if store.scanning { BusyPill(text: store.status.isEmpty ? "Procurando..." : store.status) } }
+                ActionBar {
+                    Text("\(visible.count) projetos · \(Fmt.bytes(visible.reduce(0) { $0 + $1.total }))").font(.system(size: 12.5)).foregroundStyle(Theme.text2)
+                    if let f = store.freed { Text("Liberado: \(Fmt.bytes(f))").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.green) }
+                    Spacer()
+                    Button("Adicionar pasta") { store.addRoot() }.buttonStyle(.app)
+                    Text("Selecionado").font(.system(size: 12.5)).foregroundStyle(Theme.text2)
+                    Text(Fmt.bytes(store.selectedBytes)).font(.system(size: 14, weight: .semibold)).monospacedDigit()
+                    Button("Apagar selecionados") { confirm = true }.buttonStyle(.primary).disabled(store.selected.isEmpty || store.scanning)
+                }
             }
-            Divider()
-            HStack {
-                Text("\(visible.count) projetos · \(Fmt.bytes(visible.reduce(0) { $0 + $1.total }))").foregroundStyle(.secondary)
-                if let f = store.freed { Text("Liberado: \(Fmt.bytes(f))").fontWeight(.semibold) }
-                Spacer()
-                Button("Adicionar pasta...") { store.addRoot() }
-                Text("Selecionado: \(Fmt.bytes(store.selectedBytes))").monospacedDigit()
-                Button("Apagar selecionados") { confirm = true }.buttonStyle(.borderedProminent).controlSize(.large).disabled(store.selected.isEmpty || store.scanning)
-            }
-            .padding(12)
         }
+        .background(Theme.bg)
         .navigationTitle("Projetos")
-        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning) }
+        .toolbar { Button { Task { await store.scan() } } label: { Image(systemName: "arrow.clockwise") }.disabled(store.scanning).help("Procurar de novo") }
         .confirmationDialog("Apagar \(store.selected.count) pastas (\(Fmt.bytes(store.selectedBytes)))?", isPresented: $confirm) {
             Button("Apagar de vez", role: .destructive) { Task { await store.clean() } }
         } message: { Text("São apagadas direto, sem Lixeira. Para recriar: npm/pnpm install, cargo build, pod install, pip install -r ...") }
@@ -256,40 +249,47 @@ struct ProjectsView: View {
         let open = expanded.contains(p.id)
         let paths = p.artifacts.map(\.path)
         let n = paths.filter { store.selected.contains($0) }.count
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 14) {
                 TriCheck(state: n == 0 ? false : n == paths.count ? true : nil) {
                     if n == paths.count { store.selected.subtract(paths) } else { store.selected.formUnion(paths) }
                 }
-                Image(systemName: p.isGit ? "arrow.triangle.branch" : "folder").foregroundStyle(.secondary).frame(width: 16)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(p.name).fontWeight(.medium)
-                    Text(Paths.pretty(p.path)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Image(systemName: p.isGit ? "arrow.triangle.branch" : "folder")
+                    .font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text2)
+                    .frame(width: 28, height: 28).background(RoundedRectangle(cornerRadius: 7).fill(Theme.subtle))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(p.name).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.text).lineLimit(1)
+                    Text(Paths.pretty(p.path)).font(.system(size: 11.5)).foregroundStyle(Theme.text3).lineLimit(1).truncationMode(.middle)
                 }
-                Spacer()
-                Text(p.artifacts.map(\.kind).joined(separator: ", ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                Text("mexido \(Fmt.ago(p.lastActivity))").font(.caption).foregroundStyle(p.idleDays > 90 ? .orange : .secondary).frame(width: 130, alignment: .trailing)
-                Text(Fmt.bytes(p.total)).monospacedDigit().fontWeight(.semibold).frame(width: 80, alignment: .trailing)
-                Button { if open { expanded.remove(p.id) } else { expanded.insert(p.id) } } label: {
-                    Image(systemName: "chevron.down").rotationEffect(.degrees(open ? 180 : 0))
-                }.buttonStyle(.borderless)
+                .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
+                Text(p.artifacts.map(\.kind).joined(separator: ", ")).font(.system(size: 12)).foregroundStyle(Theme.text2).lineLimit(1)
+                    .frame(maxWidth: 220, alignment: .trailing)
+                Text(Fmt.ago(p.lastActivity)).font(.system(size: 12)).foregroundStyle(p.idleDays > 90 ? Theme.amber : Theme.text2)
+                    .lineLimit(1).frame(width: 110, alignment: .trailing)
+                Text(Fmt.bytes(p.total)).font(.system(size: 13, weight: .semibold)).monospacedDigit().foregroundStyle(Theme.text).frame(width: 78, alignment: .trailing)
+                IconButton(symbol: open ? "chevron.up" : "chevron.down", help: "Ver pastas") { if open { expanded.remove(p.id) } else { expanded.insert(p.id) } }
             }
             if open {
-                ForEach(p.artifacts) { a in
-                    HStack(spacing: 8) {
-                        Toggle("", isOn: Binding(get: { store.selected.contains(a.path) }, set: { if $0 { store.selected.insert(a.path) } else { store.selected.remove(a.path) } }))
-                            .toggleStyle(.checkbox).labelsHidden()
-                        Text(a.kind).frame(width: 150, alignment: .leading)
-                        Text(Paths.pretty(a.path)).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                        Spacer()
-                        SafetyBadge(safety: a.safety)
-                        Text(Fmt.bytes(a.size)).font(.callout).monospacedDigit().frame(width: 75, alignment: .trailing)
-                        Button { FileOps.reveal(a.path) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless)
+                VStack(spacing: 0) {
+                    ForEach(p.artifacts) { a in
+                        HStack(spacing: 10) {
+                            Toggle("", isOn: Binding(get: { store.selected.contains(a.path) }, set: { if $0 { store.selected.insert(a.path) } else { store.selected.remove(a.path) } }))
+                                .toggleStyle(.checkbox).labelsHidden()
+                            Text(a.kind).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.text).frame(width: 150, alignment: .leading)
+                            Text(Paths.pretty(a.path)).font(.system(size: 11.5, design: .monospaced)).foregroundStyle(Theme.text2).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 12)
+                            SafetyBadge(safety: a.safety)
+                            Text(Fmt.bytes(a.size)).font(.system(size: 12)).monospacedDigit().frame(width: 72, alignment: .trailing)
+                            IconButton(symbol: "folder", help: "Mostrar no Finder") { FileOps.reveal(a.path) }
+                        }
+                        .frame(minHeight: 32)
                     }
-                    .padding(.leading, 28)
                 }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.subtle))
+                .padding(.leading, 32)
+                .padding(.top, 12)
             }
         }
-        .padding(.vertical, 3)
     }
 }

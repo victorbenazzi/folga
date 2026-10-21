@@ -8,6 +8,16 @@ struct StartupItem: Identifiable {
         case daemon = "Daemon (root)"
         case loginItem = "Item de login"
         case background = "Tarefa em segundo plano"
+
+        var plural: String {
+            switch self {
+            case .userAgent: "Agentes do usuário"
+            case .globalAgent: "Agentes globais"
+            case .daemon: "Daemons (root)"
+            case .loginItem: "Itens de login"
+            case .background: "Tarefas em segundo plano"
+            }
+        }
     }
 
     let id: String
@@ -26,6 +36,7 @@ struct StartupItem: Identifiable {
     var lastUse: String?
     var safety: Safety = .safe
     var note = ""
+    var arguments: String?
 
     var isOrphan: Bool { program != nil && !programExists }
     var canToggle: Bool { plist != nil }
@@ -67,7 +78,7 @@ enum StartupScanner {
                 var item = StartupItem(id: path, label: label, name: label, kind: kind, plist: path, program: program)
                 if let program, program.hasPrefix("/") { item.programExists = Paths.exists(program) }
                 if let args, args.count > 1, program?.hasSuffix("sh") == true || program?.hasSuffix("env") == true {
-                    item.note = args.dropFirst().joined(separator: " ")
+                    item.arguments = args.dropFirst().joined(separator: " ")
                 }
                 item.runAtLoad = d["RunAtLoad"] as? Bool ?? false
                 item.keepAlive = (d["KeepAlive"] as? Bool) ?? (d["KeepAlive"] is [String: Any])
@@ -264,38 +275,43 @@ struct StartupView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("O que liga sozinho quando você faz login").font(.headline)
-                    Text("Agentes launchd, daemons, itens de login e tarefas em segundo plano. Desativar é reversível; remover manda o plist para a Lixeira.")
-                        .font(.callout).foregroundStyle(.secondary)
+            PageHeader(title: "O que liga sozinho quando você faz login",
+                       subtitle: "Agentes launchd, daemons, itens de login e tarefas em segundo plano. Desativar é reversível; remover manda o plist para a Lixeira.") {
+                Toggle("Mostrar desativados", isOn: $showDisabled).toggleStyle(.checkbox).font(.system(size: 12.5)).fixedSize()
+                Button("Abrir Itens de Início") { SystemInfo.openLoginItemsSettings() }.buttonStyle(.app)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                if store.btmMissing {
+                    Notice(text: "O serviço de Itens de Início do macOS não respondeu (sfltool). Mostrando só launchd; itens de login de apps estão em Ajustes.")
                 }
-                Spacer()
-                Toggle("Mostrar desativados", isOn: $showDisabled).toggleStyle(.checkbox)
-                Button("Abrir Itens de Início") { SystemInfo.openLoginItemsSettings() }
+                if store.loading && !store.items.isEmpty {
+                    HStack(spacing: 8) { ProgressView().controlSize(.small); Text("Consultando itens de login do macOS...").font(.system(size: 12)).foregroundStyle(Theme.text2) }
+                }
+                if let m = store.message { Notice(text: m) }
             }
-            .padding(16)
-            if store.btmMissing {
-                Label("O serviço de Itens de Início do macOS não respondeu (sfltool). Mostrando só launchd; itens de login de apps estão em Ajustes.", systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.orange).padding(.horizontal, 16).padding(.bottom, 8)
-            }
-            if store.loading && !store.items.isEmpty { ProgressView("Consultando itens de login do macOS...").controlSize(.small).padding(.bottom, 8) }
-            if let m = store.message { Label(m, systemImage: "info.circle").foregroundStyle(.orange).padding(.horizontal, 16).padding(.bottom, 8) }
-            Divider()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Theme.pagePadding)
+            .padding(.bottom, 12)
+            Hairline()
             List {
                 ForEach(StartupItem.Kind.allCases, id: \.self) { kind in
                     let rows = store.items.filter { $0.kind == kind && (showDisabled || !$0.disabled) }
                     if !rows.isEmpty {
-                        Section("\(kind.rawValue)s (\(rows.count))") {
-                            ForEach(rows) { row($0) }
+                        Section {
+                            ForEach(rows) { row($0).cleanRow() }
+                        } header: {
+                            SectionTitle(title: kind.plural, value: "\(rows.count)")
+                                .padding(.horizontal, Theme.pagePadding - 16)
                         }
                     }
                 }
             }
-            .overlay { if store.loading && store.items.isEmpty { ProgressView("Lendo launchd e BTM...") } }
+            .cleanList()
+            .overlay { if store.loading && store.items.isEmpty { BusyPill(text: "Lendo launchd e itens de login...") } }
         }
+        .background(Theme.bg)
         .navigationTitle("Itens de início")
-        .toolbar { Button { Task { await store.load() } } label: { Image(systemName: "arrow.clockwise") } }
+        .toolbar { Button { Task { await store.load() } } label: { Image(systemName: "arrow.clockwise") }.help("Atualizar") }
         .task { if store.items.isEmpty { await store.load() } }
         .confirmationDialog("Remover \(confirmRemove?.name ?? "")?", isPresented: Binding(get: { confirmRemove != nil }, set: { if !$0 { confirmRemove = nil } })) {
             Button("Desligar e mover para a Lixeira", role: .destructive) { if let i = confirmRemove { Task { await store.remove(i) } } }
@@ -305,31 +321,55 @@ struct StartupView: View {
     }
 
     private func row(_ i: StartupItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Circle().fill(i.running ? Color.green : i.disabled ? Color.gray.opacity(0.4) : Color.yellow.opacity(0.7))
-                .frame(width: 9, height: 9).padding(.top, 5)
+        HStack(alignment: .top, spacing: 14) {
+            Circle().fill(i.running ? Theme.green : i.disabled ? Theme.lineStrong : Theme.barWired)
+                .frame(width: 8, height: 8).padding(.top, 6)
                 .help(i.running ? "Rodando agora" : i.disabled ? "Desativado" : "Ativado, não está rodando agora")
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(i.name).fontWeight(.medium).strikethrough(i.disabled)
-                    if i.isOrphan { Text("ÓRFÃO").font(.caption2.bold()).foregroundStyle(.white).padding(.horizontal, 5).background(.red, in: Capsule()) }
-                    if i.keepAlive { Text("sempre ligado").font(.caption2).foregroundStyle(.orange) }
-                    if let d = i.developer ?? i.parentApp { Text(d).font(.caption).foregroundStyle(.secondary) }
+            VStack(alignment: .leading, spacing: 4) {
+                FlowLayout(spacing: 6, lineSpacing: 4) {
+                    Text(i.name).font(.system(size: 13, weight: .medium)).foregroundStyle(i.disabled ? Theme.text3 : Theme.text).strikethrough(i.disabled)
+                    if i.isOrphan { Tag(text: "ÓRFÃO", fg: .white, bg: Theme.red) }
+                    if i.keepAlive { Tag(text: "sempre ligado", fg: Theme.amber, bg: Theme.amberSoft) }
+                    if let d = i.developer ?? i.parentApp { Tag(text: d) }
                 }
-                if i.name != i.label { Text(i.label).font(.caption).foregroundStyle(.secondary) }
-                if let p = i.program { Text(Paths.pretty(p)).font(.caption.monospaced()).foregroundStyle(i.programExists ? Color.secondary : Color.red).lineLimit(1).truncationMode(.middle) }
-                Text(i.note).font(.caption).foregroundStyle(.secondary)
+                if i.name != i.label { Text(i.label).font(.system(size: 11.5)).foregroundStyle(Theme.text3).lineLimit(1) }
+                if let p = i.program {
+                    Text(Paths.pretty(p)).font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(i.programExists ? Theme.text2 : Theme.red).lineLimit(1).truncationMode(.middle)
+                }
+                if let a = i.arguments {
+                    Text(a).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.text3).lineLimit(1).truncationMode(.tail).help(a)
+                }
+                Text(i.note).font(.system(size: 12)).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            SafetyBadge(safety: i.safety, help: i.note)
-            if i.canToggle {
-                Button(i.disabled ? "Ativar" : "Desativar") { Task { await store.toggle(i) } }
-                Button("Remover") { confirmRemove = i }.tint(.red)
-            } else {
-                Button("Ajustes...") { SystemInfo.openLoginItemsSettings() }.help("Itens registrados pelo app só podem ser ligados/desligados em Ajustes do Sistema")
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                SafetyBadge(safety: i.safety, help: i.note).padding(.trailing, 6)
+                if i.canToggle {
+                    Button(i.disabled ? "Ativar" : "Desativar") { Task { await store.toggle(i) } }.buttonStyle(.app)
+                    Button("Remover") { confirmRemove = i }.buttonStyle(.dangerSoft)
+                } else {
+                    Button("Ajustes") { SystemInfo.openLoginItemsSettings() }.buttonStyle(.app)
+                        .help("Itens registrados pelo app só podem ser ligados ou desligados em Ajustes do Sistema")
+                }
+                if let p = i.plist ?? i.program { IconButton(symbol: "folder", help: "Mostrar no Finder") { FileOps.reveal(p) } }
             }
-            if let p = i.plist ?? i.program { Button { FileOps.reveal(p) } label: { Image(systemName: "magnifyingglass") }.buttonStyle(.borderless).help("Mostrar no Finder") }
         }
-        .padding(.vertical, 3)
+    }
+}
+
+struct Notice: View {
+    let text: String
+    var symbol = "exclamationmark.triangle.fill"
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 12))
+            Text(text).font(.system(size: 12.5)).fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Theme.amber)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.amberSoft))
     }
 }
