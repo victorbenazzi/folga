@@ -1,8 +1,30 @@
-# Folga
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="Ícone do Folga">
+</p>
+
+<h1 align="center">Folga</h1>
+
+<p align="center">
+  Libera RAM e disco no Mac, do jeito que dev precisa.<br>
+  App nativo, 2 MB, sem nada rodando em segundo plano.
+</p>
+
+<p align="center">
+  <a href="https://github.com/victorbenazzi/folga/releases/latest"><b>Baixar a última versão</b></a>
+  &nbsp;·&nbsp; macOS 14+ &nbsp;·&nbsp; Apple Silicon &nbsp;·&nbsp; notarizado pela Apple
+</p>
+
+<p align="center">
+  <img src="docs/memoria.png" width="820" alt="Tela de memória: processos agrupados por app e categoria, com selo de segurança e botões para encerrar ou matar">
+</p>
 
 App nativo para macOS (SwiftUI, sem dependências) que mostra o que está pesando na RAM e no disco e limpa sob demanda. Você abre, resolve e fecha: não fica rodando em segundo plano, não tem ícone na barra de menus e encerra ao fechar a janela.
 
 ## Instalar
+
+Baixe o `.zip` da [última release](https://github.com/victorbenazzi/folga/releases/latest), descompacte e arraste o `Folga.app` para Aplicativos.
+
+Ou compile:
 
 ```bash
 ./scripts/build.sh
@@ -34,6 +56,10 @@ Usa o perfil `folga` do Keychain, criado uma vez com `xcrun notarytool store-cre
 | Explorar disco | Navegação por pastas ordenadas por tamanho, estilo DaisyDisk. |
 | Restos de apps | Compara `~/Library` e `/Library` com todos os apps, ferramentas do Homebrew e CLIs instalados para achar pastas, preferências, containers e launchd de apps que você já removeu. |
 | Aplicativos | Tamanho, último uso e desinstalação levando caches, preferências e containers do app. |
+
+<p align="center">
+  <img src="docs/aplicativos.png" width="820" alt="Tela de aplicativos: tamanho, último uso e arquivos relacionados de cada app, com botão de desinstalar">
+</p>
 
 ## Regras de segurança
 
